@@ -3,30 +3,32 @@ import json
 import path
 import string
 
-var APP_NAME = "TasmotaMotorControl"
-var GITHUB_OWNER = "YOUR_GITHUB_OWNER"
-var GITHUB_REPOSITORY = "TasmotaMotorControl"
+var tmc_updater = module("tmc_updater")
+
+var APP_NAME = "TasmotaAutoUpdater"
+var GITHUB_OWNER = "WakMun"
+var GITHUB_REPOSITORY = "TasmotaAutoUpdater"
 var PUBLIC_KEY_PATH = "/tmc_ed25519.pub"
-var APP_PATH = "/application.bec"
-var STAGED_PATH = "/application.new"
-var STAGED_SOURCE_PATH = "/application.new.be"
-var STAGED_BYTECODE_PATH = "/application.new.bec"
-var STAGED_BUILD_PATH = "/application.new.build"
-var STAGED_BUILD_TEMP_PATH = "/application.new.build.tmp"
-var PENDING_PATH = "/application.update.pending"
-var PENDING_TEMP_PATH = "/application.update.pending.tmp"
-var INSTALLED_BUILD_PATH = "/application.build"
-var OLD_APP_PATH = "/application.bec.old"
-var FAILED_APP_PATH = "/application.bec.failed"
+var APP_PATH = "Application.bec"
+var STAGED_PATH = "Application.new"
+var STAGED_SOURCE_PATH = "Application.new.be"
+var STAGED_BYTECODE_PATH = "Application.new.bec"
+var STAGED_BUILD_PATH = "Application.new.build"
+var STAGED_BUILD_TEMP_PATH = "Application.new.build.tmp"
+var PENDING_PATH = "Application.update.pending"
+var PENDING_TEMP_PATH = "Application.update.pending.tmp"
+var INSTALLED_BUILD_PATH = "Application.build"
+var OLD_APP_PATH = "Application.bec.old"
+var FAILED_APP_PATH = "Application.bec.failed"
 var MAX_APP_SIZE = 65536
 var MAX_MANIFEST_SIZE = 4096
-var TIMER_ID = "TasmotaMotorControlUpdate"
+var TIMER_ID = "TasmotaAutoUpdaterUpdate"
 var BOOT_UPDATE_DELAY = 180000
 var RETRY_DELAY = 600000
 var REGULAR_CHECK_DELAY = 3600000
 
 def _log(message)
-  print("TasmotaMotorControl updater:", message)
+  print("TasmotaAutoUpdater updater:", message)
 end
 
 def _remove_if_exists(file_path)
@@ -118,7 +120,7 @@ def _fetch_text(url)
   end
   var client = webclient()
   client.set_follow_redirects(true)
-  client.set_useragent("TasmotaMotorControl-updater")
+  client.set_useragent("TasmotaAutoUpdater-updater")
   client.begin(url)
   var status = client.GET()
   if status != 200
@@ -147,7 +149,7 @@ def _download_application(url)
   end
   var client = webclient()
   client.set_follow_redirects(true)
-  client.set_useragent("TasmotaMotorControl-updater")
+  client.set_useragent("TasmotaAutoUpdater-updater")
   client.begin(url)
   var status = client.GET()
   if status != 200
@@ -446,3 +448,10 @@ def rollback_staged()
   tasmota.cmd("Restart 1")
   return true
 end
+
+tmc_updater.start_background_check = start_background_check
+tmc_updater.activate_staged = activate_staged
+tmc_updater.confirm_active = confirm_active
+tmc_updater.rollback_staged = rollback_staged
+
+return tmc_updater

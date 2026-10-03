@@ -1,20 +1,18 @@
 import path
+import tmc_updater
 
-var updater_available = false
+var updater_available = true
 try
-  import tmc_updater
-  updater_available = true
   tmc_updater.activate_staged()
 except .. as error, message
-  print("TasmotaMotorControl: updater unavailable:", message)
+  print("TasmotaAutoUpdater: updater unavailable:", message)
 end
 
 if updater_available
   try
-    import tmc_updater
     tmc_updater.start_background_check()
   except .. as error, message
-    print("TasmotaMotorControl: could not schedule update check:", message)
+    print("TasmotaAutoUpdater: could not schedule update check:", message)
   end
 end
 
@@ -24,25 +22,23 @@ if path.exists("Application.bec")
     load("Application.bec")
     application_started = true
   except .. as error, message
-    print("TasmotaMotorControl: application load failed:", message)
+    print("TasmotaAutoUpdater: application load failed:", message)
     if updater_available
       try
-        import tmc_updater
         tmc_updater.rollback_staged()
       except .. as rollback_error, rollback_message
-        print("TasmotaMotorControl: rollback failed:", rollback_message)
+        print("TasmotaAutoUpdater: rollback failed:", rollback_message)
       end
     end
   end
 else
-  print("TasmotaMotorControl: no installed bytecode")
+  print("TasmotaAutoUpdater: no installed bytecode")
 end
 
 if updater_available && application_started
   try
-    import tmc_updater
     tmc_updater.confirm_active()
   except .. as error, message
-    print("TasmotaMotorControl: could not confirm application:", message)
+    print("TasmotaAutoUpdater: could not confirm application:", message)
   end
 end
