@@ -1,4 +1,5 @@
 import hashlib
+import json
 
 import pytest
 from cryptography.exceptions import InvalidSignature
@@ -6,77 +7,60 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from tools.package_release import (
-    HEADER,
-    MAGIC,
-    FORMAT_VERSION,
-    asset_name,
+    create_manifest,
     generate_keys,
     load_private_key,
-    make_bundle,
-    parse_bundle,
+    parse_build,
     parse_version,
-    verify_asset_name,
-    write_release,
+    signed_manifest_message,
+    write_manifest,
 )
 
 
-def test_bundle_header_and_payload_are_consistent():
-    version = parse_version("1.2.3")
-    payload = b"compiled-berry-bytecode"
-
-    bundle = make_bundle(payload, version)
-    header = parse_bundle(bundle)
-
-    assert header.version == version
-    assert header.payload_size == len(payload)
-    assert bundle[HEADER.size:] == payload
-
-
-def test_release_signature_authenticates_the_complete_bundle_digest():
+def test_manifest_contains_source_hash_and_signed_release_metadata():
     key = Ed25519PrivateKey.generate()
-    bundle = make_bundle(b"compiled-berry-bytecode", (2, 0, 1))
-    signature = key.sign(hashlib.sha256(bundle).digest())
+    source = b'import gpio\nchange_color()\n'
 
-    key.public_key().verify(signature, hashlib.sha256(bundle).digest())
+    manifest = create_manifest(source, "1.2.3", 42, key)
+
+    assert manifest["version"] == "1.2.3"
+    assert manifest["build"] == 42
+    assert manifest["sha256"] == hashlib.sha256(source).hexdigest().upper()
+    key.public_key().verify(
+        bytes.fromhex(manifest["signature"]),
+        hashlib.sha256(
+            signed_manifest_message("1.2.3", 42, manifest["sha256"])
+        ).digest(),
+    )
+
+
+def test_signature_authenticates_build_and_version():
+    key = Ed25519PrivateKey.generate()
+    manifest = create_manifest(b"application", "2.0.1", 7, key)
+    tampered_message = hashlib.sha256(
+        signed_manifest_message("2.0.1", 8, manifest["sha256"])
+    ).digest()
+
     with pytest.raises(InvalidSignature):
-        key.public_key().verify(signature, hashlib.sha256(bundle + b"x").digest())
+        key.public_key().verify(bytes.fromhex(manifest["signature"]), tampered_message)
 
 
-def test_header_rejects_tampered_payload():
-    bundle = bytearray(make_bundle(b"compiled-berry-bytecode", (1, 0, 0)))
-    bundle[-1] ^= 1
+def test_manifest_rejects_empty_source_and_invalid_version_or_build():
+    key = Ed25519PrivateKey.generate()
 
-    with pytest.raises(ValueError, match="payload hash"):
-        parse_bundle(bytes(bundle))
-
-
-def test_header_rejects_wrong_magic_and_format():
-    good = make_bundle(b"bytecode", (1, 0, 0))
-    wrong_magic = b"NOPE" + good[4:]
-    wrong_format = good[:4] + bytes([FORMAT_VERSION + 1]) + good[5:]
-
-    with pytest.raises(ValueError, match="magic"):
-        parse_bundle(wrong_magic)
-    with pytest.raises(ValueError, match="format"):
-        parse_bundle(wrong_format)
-
-
-@pytest.mark.parametrize("value", ["1.2", "1.2.3.4", "01.2.3", "-1.2.3", "1.2.x"])
-def test_version_rejects_malformed_components(value):
+    with pytest.raises(ValueError, match="must not be empty"):
+        create_manifest(b"", "1.0.0", 1, key)
     with pytest.raises(ValueError):
-        parse_version(value)
+        parse_version("01.0.0")
+    with pytest.raises(ValueError):
+        parse_version("65536.0.0")
+    with pytest.raises(ValueError):
+        parse_build("0")
+    with pytest.raises(ValueError):
+        parse_build("1.2")
 
 
-def test_asset_filename_must_match_header_version():
-    version = (1, 4, 2)
-    name = asset_name(version)
-
-    verify_asset_name(name, version)
-    with pytest.raises(ValueError, match="does not match"):
-        verify_asset_name(name, (1, 4, 3))
-
-
-def test_release_builder_writes_a_bundle_and_matching_signature(tmp_path):
+def test_write_manifest_serializes_a_signed_source_manifest(tmp_path):
     key = Ed25519PrivateKey.generate()
     key_path = tmp_path / "signing.pem"
     key_path.write_bytes(
@@ -86,23 +70,20 @@ def test_release_builder_writes_a_bundle_and_matching_signature(tmp_path):
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    payload_path = tmp_path / "compiled.bec"
-    payload_path.write_bytes(b"compiled-berry-bytecode")
+    source_path = tmp_path / "Application.be"
+    source_path.write_bytes(b"application source")
+    manifest_path = tmp_path / "dist" / "app_manifest.json"
 
-    bundle_path, signature_path = write_release(
-        payload_path,
-        (3, 1, 4),
-        key_path,
-        tmp_path / "dist",
+    write_manifest(source_path, "3.1.4", 123, key_path, manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["sha256"] == hashlib.sha256(source_path.read_bytes()).hexdigest().upper()
+    key.public_key().verify(
+        bytes.fromhex(manifest["signature"]),
+        hashlib.sha256(
+            signed_manifest_message("3.1.4", 123, manifest["sha256"])
+        ).digest(),
     )
-    bundle = bundle_path.read_bytes()
-    signature = signature_path.read_bytes()
-
-    assert bundle_path.name == "TasmotaMotorControl-v3.1.4.bec"
-    assert signature_path.name == bundle_path.name + ".sig"
-    assert len(signature) == 64
-    assert parse_bundle(bundle).version == (3, 1, 4)
-    key.public_key().verify(signature, hashlib.sha256(bundle).digest())
 
 
 def test_keygen_writes_an_encrypted_private_key_and_raw_public_key(tmp_path, monkeypatch):

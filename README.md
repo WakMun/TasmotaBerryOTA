@@ -1,98 +1,112 @@
 # TasmotaMotorControl
 
-A Berry boot updater for a Tasmota32 device. At boot, `autoexec.be` checks the
-latest GitHub release, downloads a newer signed Berry bytecode bundle, verifies
-it using a public key kept on the device, and only then replaces the installed
-bytecode. The previous bytecode is retained as `TasmotaMotorControl.bec.old`.
+A signed, staged Berry application updater for Tasmota32. `autoexec.be` is the
+small boot guard: it activates bytecode staged by an earlier update check,
+loads `/application.bec`, then schedules a GitHub check three minutes after
+startup. The updater verifies the downloaded raw Berry source before compiling
+it locally and marking it ready for the next boot.
 
-This repository contains the updater and release packaging tools; it does not
-include motor-control application logic. Supply a compiled Berry `.bec` file as
-the release input.
+`Application.be` is the sample application. The release workflow publishes a
+copy named `application.be`, together with `app_manifest.json`, as assets of a
+stable GitHub Release.
 
-## Device requirements
+## Device requirements and setup
 
-- ESP32 running Tasmota with Berry and UFS enabled. Berry/UFS is not available
-  in the same way on ESP8266.
-- Firmware exposing both `crypto.ED25519` and `crypto.SHA256`. These classes
-  are compile-time optional in Tasmota. If either is missing, the updater logs
-  the error and leaves the installed application untouched.
-- Enough UFS free space for the incoming bundle, staged executable, and
-  previous executable. The updater caps a bundle at 64 KiB; allow at least
-  224 KiB free for an update at that limit.
+- ESP32 running Tasmota with Berry and UFS enabled.
+- Tasmota Berry exposing `crypto.SHA256`, `crypto.ED25519`, and
+  `tasmota.compile`.
+- Enough free UFS space for the 64 KiB source limit, compiled staging file,
+  active application, and rollback copy.
 
-## Install on Tasmota
+Before uploading the files:
 
-1. Set `GITHUB_OWNER` in `tmc_updater.be` to the account or organization that
-   will host this repository.
-2. Generate a signing key pair as described below. Copy the 32-byte raw public
-   key to the device UFS as `/tmc_ed25519.pub`. Never upload that key as a
-   GitHub release asset; keep the private key offline.
-3. Upload `autoexec.be` and `tmc_updater.be` to the root of Tasmota UFS. Tasmota
-   runs `autoexec.be` automatically at boot.
-4. If an application binary is already installed, also create
-   `/TasmotaMotorControl.version` containing its exact `MAJOR.MINOR.PATCH`
-   version. The updater refuses to guess the version of an existing binary.
-   With no installed application or version file, the first signed release can
-   be installed on the next boot.
+1. Set `GITHUB_OWNER` in `tmc_updater.be` to the GitHub account or organization
+   containing this repository.
+2. Generate the Ed25519 key pair (instructions below) and copy the 32-byte raw
+   public key to Tasmota UFS as `/tmc_ed25519.pub`. Keep the private key
+   private; never upload it or commit it.
+3. Upload `autoexec.be` and `tmc_updater.be` to the root of Tasmota UFS.
+4. Compile `Application.be` on the device with
+   `tasmota.compile("Application.be")`, then ensure the compiled
+   `/Application.bec` is installed as `/application.bec`. The casing in the
+   filesystem path may matter on the device.
+5. Create `/application.build` containing the installed release's build
+   integer, or `0` for an application not yet released by this workflow.
 
-The release check uses GitHub's `releases/latest` API endpoint and scans its
-assets for `TasmotaMotorControl-vMAJOR.MINOR.PATCH.bec` and the matching
-`.sig` asset. Only a release newer than the installed version is downloaded.
-The repository owner and name in the script must match the eventual GitHub
-repository.
+The sample `Application.be` expects GPIO8 to be configured as WS2812. Change
+that pin if needed.
 
-## Create and publish a release
+## Stable release workflow
 
-Use Python 3.10 or newer:
+Create an encrypted Ed25519 key pair once:
 
 ```powershell
 python -m pip install -e ".[test]"
 python tools/package_release.py keygen --private-key signing-key.pem --public-key tmc_ed25519.pub
-python tools/package_release.py package --version 1.2.3 --input TasmotaMotorControl.bec --private-key signing-key.pem
+```
+
+The key-generation command is a one-time setup step; it is not part of
+publishing each release. Keep the private key in secure storage and add two
+GitHub Actions repository secrets:
+
+- `TMC_SIGNING_KEY_PEM`: the complete PEM private key.
+- `TMC_SIGNING_KEY_PASSWORD`: its passphrase.
+
+To publish an update, commit and push the changed `Application.be`, then push a
+stable semantic-version tag for that commit, such as `v1.2.3`. The tag push
+triggers GitHub Actions. You do not run `package_release.py manifest` or
+generate the manifest yourself: Actions builds the Berry interpreter and uses
+it to parse `Application.be` without executing the application, runs the
+Python tests, generates a monotonically increasing build number from the
+GitHub Actions run number, and runs `package_release.py` to hash the source and
+sign `app_manifest.json`. It then publishes the raw source as `application.be`
+and the generated manifest as assets of the stable GitHub Release.
+
+`tools/package_release.py` is the workflow's signing helper, not a required
+manual release step. It also provides the one-time key-generation command
+above.
+
+The manifest includes `version`, `build`, `sha256`, and a hex-encoded Ed25519
+`signature`. The signature authenticates the source hash **and** the version
+and build fields, preventing those fields from being altered independently.
+The signing input is SHA-256 of the UTF-8 text
+`TasmotaMotorControl\n<version>\n<build>\n<SHA256_HEX>`, signed with Ed25519.
+The SHA-256 value is calculated over the exact raw bytes of
+`Application.be`; no header or packaging bytes are added.
+
+Run the local test suite with:
+
+```powershell
 python -m pytest
 ```
 
-Compile the application bytecode with the Tasmota Berry compiler first. The
-`--input` file is the resulting raw `.bec` bytecode. `keygen` encrypts the
-private key with a passphrase; keep it in secure storage. The generated raw
-public key is the file to provision manually to Tasmota UFS. Do not commit
-either key.
+## Device update and recovery
 
-Upload both generated files from `dist/` to the GitHub release:
+The boot guard follows this sequence:
 
-```text
-TasmotaMotorControl-v1.2.3.bec
-TasmotaMotorControl-v1.2.3.bec.sig
-```
+1. If `/application.update.pending` exists, activate `/application.new` by
+   renaming the previous `/application.bec` to a rollback file, then promoting
+   the staged bytecode.
+2. Load `/application.bec`. If loading fails during an update, restore the
+   previous bytecode and restart Tasmota. After a successful load, record the
+   build and remove the rollback files.
+3. Schedule a check after three minutes. If Wi-Fi is down, retry later.
+4. Fetch the latest stable release manifest, and skip it when its build is not
+   greater than the locally installed build.
+5. Download raw `application.be` to `/application.new`, check its SHA-256 and
+   Ed25519 signature using the device-only public key, compile it to Berry
+   bytecode, and atomically set the pending marker. The current application
+   keeps running; the staged update is activated on the next boot.
 
-The `.bec` release asset is a small versioned bundle: a 47-byte `TMCB` header
-followed by the compiled Berry bytecode. Its header records the format version,
-semantic version, payload length, and payload SHA-256 digest. The updater
-authenticates the SHA-256 digest of the complete bundle with a detached
-Ed25519 signature, then checks the header and extracts the bytecode. The
-filename version and signed header version must agree.
+LittleFS/UFS files are `/autoexec.be` (boot guard),
+`/application.bec` (active bytecode), and `/application.new` (quarantined
+source while verification runs, then compiled bytecode after it passes).
+Small marker/build files and a rollback copy support recovery from interrupted
+file renames and failed application startup.
 
-The signature is plain Ed25519 over the 32-byte SHA-256 digest of the complete
-bundle (not Ed25519ph and not a signature over the raw bundle bytes). This
-allows Tasmota to hash the download from UFS in chunks without buffering the
-whole executable in RAM. The detached signature is exactly 64 raw bytes.
-
-## Update and recovery behavior
-
-The script downloads into temporary UFS files, checks the HTTP status and
-bounded size, verifies the detached signature with the device-only public key,
-validates the signed bundle header and payload, and then promotes the staged
-bytecode. The previous executable and version are renamed to `.old` before
-promotion. Tasmota is restarted after an installation so the boot script loads
-the new bytecode on the following boot.
-
-If an installed bytecode file fails to load, `autoexec.be` attempts to restore
-the `.old` executable and restarts. An update error is logged and does not
-replace the current executable. HTTPS is used for transport, but Tasmota's
-default synchronous webclient does not necessarily authenticate the TLS
-server; release authenticity comes from the Ed25519 signature and the public
-key on UFS.
-
-The updater's header format and release signer are implemented in
-[`tools/package_release.py`](./tools/package_release.py); protocol regression
-tests are in [`tests/test_package_release.py`](./tests/test_package_release.py).
+The timer defers update work until after startup, but Berry's event loop and
+Tasmota's standard `webclient` and compile call are synchronous. A network
+request or compilation can therefore temporarily block the Tasmota loop; this
+design is delayed/cooperative work, not a separate background thread.
+Transport uses HTTPS, while authenticity is provided by the Ed25519 signature
+and the public key stored on the device.

@@ -1,102 +1,78 @@
 #!/usr/bin/env python3
-"""Build and sign TasmotaMotorControl release bundles."""
+"""Create a signed manifest for raw TasmotaMotorControl Berry source."""
 
 from __future__ import annotations
 
 import argparse
 import getpass
 import hashlib
+import json
 import os
 import re
-import struct
 from pathlib import Path
-from typing import NamedTuple
+from typing import TypedDict
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 APP_NAME = "TasmotaMotorControl"
-MAGIC = b"TMCB"
-FORMAT_VERSION = 1
-HEADER = struct.Struct(">4sBHHHI32s")
 VERSION_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
-ASSET_PATTERN = re.compile(
-    rf"{APP_NAME}-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.bec\Z"
-)
+BUILD_PATTERN = re.compile(r"[1-9][0-9]*\Z")
 
 
-class BundleHeader(NamedTuple):
-    version: tuple[int, int, int]
-    payload_size: int
-    payload_sha256: bytes
+class Manifest(TypedDict):
+    version: str
+    build: int
+    sha256: str
+    signature: str
 
 
-def parse_version(value: str) -> tuple[int, int, int]:
+def parse_version(value: str) -> str:
     match = VERSION_PATTERN.fullmatch(value)
     if match is None:
         raise ValueError("version must be numeric MAJOR.MINOR.PATCH")
-
-    version = tuple(int(part) for part in match.groups())
-    if any(part > 0xFFFF for part in version):
+    if any(int(part) > 65535 for part in match.groups()):
         raise ValueError("each version component must be at most 65535")
-    return version
+    return value
 
 
-def version_text(version: tuple[int, int, int]) -> str:
-    return ".".join(str(part) for part in version)
+def parse_build(value: str) -> int:
+    if BUILD_PATTERN.fullmatch(value) is None:
+        raise ValueError("build must be a positive integer")
+    build = int(value)
+    if build > 0x7FFFFFFF:
+        raise ValueError("build must not exceed 2147483647")
+    return build
 
 
-def asset_name(version: tuple[int, int, int]) -> str:
-    return f"{APP_NAME}-v{version_text(version)}.bec"
+def signed_manifest_message(version: str, build: int, digest_hex: str) -> bytes:
+    return f"{APP_NAME}\n{version}\n{build}\n{digest_hex}".encode("ascii")
 
 
-def make_bundle(payload: bytes, version: tuple[int, int, int]) -> bytes:
-    if not payload:
-        raise ValueError("compiled Berry bytecode must not be empty")
-    if len(payload) > 0xFFFFFFFF:
-        raise ValueError("compiled Berry bytecode exceeds the format limit")
+def create_manifest(
+    source: bytes,
+    version: str,
+    build: int,
+    private_key: Ed25519PrivateKey,
+) -> Manifest:
+    parse_version(version)
+    if build <= 0 or build > 0x7FFFFFFF:
+        raise ValueError("build must be between 1 and 2147483647")
+    if not source:
+        raise ValueError("Berry source file must not be empty")
 
-    header = HEADER.pack(
-        MAGIC,
-        FORMAT_VERSION,
-        *version,
-        len(payload),
-        hashlib.sha256(payload).digest(),
-    )
-    return header + payload
-
-
-def parse_bundle(bundle: bytes) -> BundleHeader:
-    if len(bundle) < HEADER.size:
-        raise ValueError("bundle is smaller than its header")
-
-    magic, format_version, major, minor, patch, payload_size, payload_hash = (
-        HEADER.unpack_from(bundle)
-    )
-    if magic != MAGIC:
-        raise ValueError("invalid bundle magic")
-    if format_version != FORMAT_VERSION:
-        raise ValueError(f"unsupported bundle format version: {format_version}")
-    if payload_size != len(bundle) - HEADER.size:
-        raise ValueError("bundle payload length does not match its header")
-    if not payload_size:
-        raise ValueError("bundle payload is empty")
-
-    payload = bundle[HEADER.size:]
-    if hashlib.sha256(payload).digest() != payload_hash:
-        raise ValueError("bundle payload hash does not match its header")
-
-    return BundleHeader((major, minor, patch), payload_size, payload_hash)
-
-
-def verify_asset_name(name: str, version: tuple[int, int, int]) -> None:
-    match = ASSET_PATTERN.fullmatch(name)
-    if match is None or tuple(int(part) for part in match.groups()) != version:
-        raise ValueError("asset name version does not match the signed bundle header")
+    digest_hex = hashlib.sha256(source).hexdigest().upper()
+    signed_digest = hashlib.sha256(
+        signed_manifest_message(version, build, digest_hex)
+    ).digest()
+    signature_hex = private_key.sign(signed_digest).hex().upper()
+    return {
+        "version": version,
+        "build": build,
+        "sha256": digest_hex,
+        "signature": signature_hex,
+    }
 
 
 def load_private_key(path: Path) -> Ed25519PrivateKey:
@@ -117,23 +93,22 @@ def load_private_key(path: Path) -> Ed25519PrivateKey:
     return key
 
 
-def write_release(
-    payload_path: Path,
-    version: tuple[int, int, int],
+def write_manifest(
+    source_path: Path,
+    version: str,
+    build: int,
     private_key_path: Path,
-    output_dir: Path,
-) -> tuple[Path, Path]:
-    payload = payload_path.read_bytes()
-    bundle = make_bundle(payload, version)
-    digest = hashlib.sha256(bundle).digest()
-    signature = load_private_key(private_key_path).sign(digest)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    bundle_path = output_dir / asset_name(version)
-    signature_path = output_dir / f"{bundle_path.name}.sig"
-    bundle_path.write_bytes(bundle)
-    signature_path.write_bytes(signature)
-    return bundle_path, signature_path
+    manifest_path: Path,
+) -> Path:
+    manifest = create_manifest(
+        source_path.read_bytes(),
+        version,
+        build,
+        load_private_key(private_key_path),
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
 
 
 def generate_keys(private_key_path: Path, public_key_path: Path) -> None:
@@ -174,11 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     keygen.add_argument("--private-key", type=Path, required=True)
     keygen.add_argument("--public-key", type=Path, required=True)
 
-    package = subparsers.add_parser("package", help="wrap and sign compiled Berry bytecode")
-    package.add_argument("--version", required=True)
-    package.add_argument("--input", type=Path, required=True)
-    package.add_argument("--private-key", type=Path, required=True)
-    package.add_argument("--output-dir", type=Path, default=Path("dist"))
+    manifest = subparsers.add_parser("manifest", help="hash source and sign its manifest")
+    manifest.add_argument("--version", required=True)
+    manifest.add_argument("--build", required=True)
+    manifest.add_argument("--input", type=Path, required=True)
+    manifest.add_argument("--private-key", type=Path, required=True)
+    manifest.add_argument("--output", type=Path, default=Path("app_manifest.json"))
     return parser
 
 
@@ -191,19 +167,18 @@ def main() -> int:
             print("Keep the private key offline; provision only the raw public key to Tasmota UFS.")
             return 0
 
-        version = parse_version(args.version)
-        bundle_path, signature_path = write_release(
+        write_manifest(
             args.input,
-            version,
+            parse_version(args.version),
+            parse_build(args.build),
             args.private_key,
-            args.output_dir,
+            args.output,
         )
     except (FileNotFoundError, FileExistsError, OSError, TypeError, ValueError) as error:
         print(f"error: {error}")
         return 1
 
-    print(f"Bundle:    {bundle_path}")
-    print(f"Signature: {signature_path}")
+    print(f"Manifest:  {args.output}")
     return 0
 
 

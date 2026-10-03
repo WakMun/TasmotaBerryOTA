@@ -2,15 +2,74 @@ name: Tests
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
   pull_request:
 
 jobs:
-  package-tests:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch pinned Berry compiler
+        run: |
+          git init .berry
+          git -C .berry fetch --depth 1 https://github.com/berry-lang/berry.git v1.1.0
+          git -C .berry checkout --detach FETCH_HEAD
+          test "$(git -C .berry rev-parse HEAD)" = "b5ede66721937533fbf5c286ef44a5111ea30c75"
+      - run: sudo apt-get update && sudo apt-get install -y libreadline-dev
+      - run: make -C .berry
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[test]"
       - run: python -m pytest
+      - run: python tools/check_berry_syntax.py --compiler .berry/berry autoexec.be tmc_updater.be Application.be
+
+  publish-stable-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Validate release tag
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python -c "import sys; from tools.package_release import parse_version; parse_version(sys.argv[1])" "$VERSION"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Sign release manifest
+        env:
+          TMC_SIGNING_KEY_PEM: ${{ secrets.TMC_SIGNING_KEY_PEM }}
+          TMC_SIGNING_KEY_PASSWORD: ${{ secrets.TMC_SIGNING_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -eu
+          test -n "$TMC_SIGNING_KEY_PEM"
+          test -n "$TMC_SIGNING_KEY_PASSWORD"
+          trap 'rm -f signing-key.pem' EXIT
+          python -c "import os; from pathlib import Path; Path('signing-key.pem').write_text(os.environ['TMC_SIGNING_KEY_PEM'], encoding='utf-8')"
+          python tools/package_release.py manifest \
+            --version "$VERSION" \
+            --build "$GITHUB_RUN_NUMBER" \
+            --input Application.be \
+            --private-key signing-key.pem \
+            --output app_manifest.json
+          cp Application.be application.be
+      - name: Publish stable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" application.be app_manifest.json \
+            --title "TasmotaMotorControl $VERSION (build $GITHUB_RUN_NUMBER)" \
+            --notes "Signed TasmotaMotorControl Berry application release."
