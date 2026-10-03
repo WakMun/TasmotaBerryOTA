@@ -82,13 +82,13 @@ def _parse_version(text)
     if part == ""
       return nil
     end
-    var number = 0
+    var version_component = 0
     try
-      number = int(part)
+      version_component = int(part)
     except .. as error, message
       return nil
     end
-    if number < 0 || number > 65535 || str(number) != part
+    if version_component < 0 || version_component > 65535 || str(version_component) != part
       return nil
     end
   end
@@ -337,19 +337,11 @@ def _stage_update()
   return true
 end
 
-def _schedule_update_check(delay)
-  tasmota.remove_timer(TIMER_ID)
-  tasmota.set_timer(delay, check_for_update, TIMER_ID)
-end
-
-def start_background_check()
-  _schedule_update_check(BOOT_UPDATE_DELAY)
-end
-
 def check_for_update()
   if !tasmota.wifi("up")
     _log("Wi-Fi is not connected; retrying later")
-    _schedule_update_check(RETRY_DELAY)
+    tasmota.remove_timer(TIMER_ID)
+    tasmota.set_timer(RETRY_DELAY, check_for_update, TIMER_ID)
     return
   end
   try
@@ -358,7 +350,13 @@ def check_for_update()
     _log("update check failed: " + message)
     _cleanup_unstaged_files()
   end
-  _schedule_update_check(REGULAR_CHECK_DELAY)
+  tasmota.remove_timer(TIMER_ID)
+  tasmota.set_timer(REGULAR_CHECK_DELAY, check_for_update, TIMER_ID)
+end
+
+def start_background_check()
+  tasmota.remove_timer(TIMER_ID)
+  tasmota.set_timer(BOOT_UPDATE_DELAY, check_for_update, TIMER_ID)
 end
 
 def activate_staged()

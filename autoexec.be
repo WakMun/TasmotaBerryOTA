@@ -10,18 +10,24 @@ except .. as error, message
 end
 
 if updater_available
-  tmc_updater.start_background_check()
+  try
+    import tmc_updater
+    tmc_updater.start_background_check()
+  except .. as error, message
+    print("TasmotaMotorControl: could not schedule update check:", message)
+  end
 end
 
 var application_started = false
-if path.exists("/application.bec")
+if path.exists("Application.bec")
   try
-    load("/application.bec")
+    load("Application.bec")
     application_started = true
   except .. as error, message
     print("TasmotaMotorControl: application load failed:", message)
     if updater_available
       try
+        import tmc_updater
         tmc_updater.rollback_staged()
       except .. as rollback_error, rollback_message
         print("TasmotaMotorControl: rollback failed:", rollback_message)
@@ -33,5 +39,10 @@ else
 end
 
 if updater_available && application_started
-  tmc_updater.confirm_active()
+  try
+    import tmc_updater
+    tmc_updater.confirm_active()
+  except .. as error, message
+    print("TasmotaMotorControl: could not confirm application:", message)
+  end
 end
