@@ -40,15 +40,15 @@ jobs:
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Sign release manifest
         env:
-          TMC_SIGNING_KEY_PEM: ${{ secrets.TMC_SIGNING_KEY_PEM }}
-          TMC_SIGNING_KEY_PASSWORD: ${{ secrets.TMC_SIGNING_KEY_PASSWORD }}
+          OTA_SIGNING_KEY_PEM: ${{ secrets.OTA_SIGNING_KEY_PEM }}
+          OTA_SIGNING_KEY_PASSWORD: ${{ secrets.OTA_SIGNING_KEY_PASSWORD }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -eu
-          test -n "$TMC_SIGNING_KEY_PEM"
-          test -n "$TMC_SIGNING_KEY_PASSWORD"
+          test -n "$OTA_SIGNING_KEY_PEM"
+          test -n "$OTA_SIGNING_KEY_PASSWORD"
           trap 'rm -f signing-key.pem' EXIT
-          python -c "import os; from pathlib import Path; Path('signing-key.pem').write_text(os.environ['TMC_SIGNING_KEY_PEM'], encoding='utf-8')"
+          python -c "import os; from pathlib import Path; Path('signing-key.pem').write_text(os.environ['OTA_SIGNING_KEY_PEM'], encoding='utf-8')"
           python tools/package_release.py manifest \
             --version "$VERSION" \
             --build "$GITHUB_RUN_NUMBER" \
@@ -61,6 +61,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          gh release create "$GITHUB_REF_NAME" Application.be app_manifest.json \
+          gh release create "$GITHUB_REF_NAME" application.be app_manifest.json \
             --title "OTA_Application $VERSION (build $GITHUB_RUN_NUMBER)" \
             --notes "Signed TasmotaBerryOTA Berry application release."

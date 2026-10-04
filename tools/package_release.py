@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import TypedDict
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.hashes import SHA256
 
 
-APP_NAME = "TasmotaMotorControl"
+APP_NAME = "TasmotaBerryOTA"
 VERSION_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 BUILD_PATTERN = re.compile(r"[1-9][0-9]*\Z")
 
@@ -54,19 +56,23 @@ def create_manifest(
     source: bytes,
     version: str,
     build: int,
-    private_key: Ed25519PrivateKey,
+    private_key: ec.EllipticCurvePrivateKey,
 ) -> Manifest:
     parse_version(version)
+    if not isinstance(private_key.curve, ec.SECP256R1):
+        raise ValueError("signing key must use the P-256 (secp256r1) curve")
     if build <= 0 or build > 0x7FFFFFFF:
         raise ValueError("build must be between 1 and 2147483647")
     if not source:
         raise ValueError("Berry source file must not be empty")
 
     digest_hex = hashlib.sha256(source).hexdigest().upper()
-    signed_digest = hashlib.sha256(
-        signed_manifest_message(version, build, digest_hex)
-    ).digest()
-    signature_hex = private_key.sign(signed_digest).hex().upper()
+    der_signature = private_key.sign(
+        signed_manifest_message(version, build, digest_hex),
+        ec.ECDSA(SHA256()),
+    )
+    r, s = decode_dss_signature(der_signature)
+    signature_hex = (r.to_bytes(32, "big") + s.to_bytes(32, "big")).hex().upper()
     return {
         "version": version,
         "build": build,
@@ -75,7 +81,7 @@ def create_manifest(
     }
 
 
-def load_private_key(path: Path) -> Ed25519PrivateKey:
+def load_private_key(path: Path) -> ec.EllipticCurvePrivateKey:
     key_data = path.read_bytes()
     password_text = os.environ.get("TMC_SIGNING_KEY_PASSWORD")
     password = password_text.encode("utf-8") if password_text else None
@@ -88,8 +94,10 @@ def load_private_key(path: Path) -> Ed25519PrivateKey:
         password = password_text.encode("utf-8") if password_text else None
         key = serialization.load_pem_private_key(key_data, password=password)
 
-    if not isinstance(key, Ed25519PrivateKey):
-        raise ValueError("signing key must be an Ed25519 private key")
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(
+        key.curve, ec.SECP256R1
+    ):
+        raise ValueError("signing key must use the P-256 (secp256r1) curve")
     return key
 
 
@@ -122,15 +130,15 @@ def generate_keys(private_key_path: Path, public_key_path: Path) -> None:
     if len(first) < 12 or first != second:
         raise ValueError("passphrases must match and contain at least 12 characters")
 
-    private_key = Ed25519PrivateKey.generate()
+    private_key = ec.generate_private_key(ec.SECP256R1())
     private_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.BestAvailableEncryption(first.encode("utf-8")),
     )
     public_raw = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
     )
 
     private_key_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    keygen = subparsers.add_parser("keygen", help="create an Ed25519 signing key pair")
+    keygen = subparsers.add_parser("keygen", help="create a P-256 ECDSA signing key pair")
     keygen.add_argument("--private-key", type=Path, required=True)
     keygen.add_argument("--public-key", type=Path, required=True)
 
@@ -163,8 +171,8 @@ def main() -> int:
     try:
         if args.command == "keygen":
             generate_keys(args.private_key, args.public_key)
-            print(f"Raw public key written to {args.public_key}")
-            print("Keep the private key offline; provision only the raw public key to Tasmota UFS.")
+            print(f"Uncompressed P-256 public key written to {args.public_key}")
+            print("Keep the private key offline; provision only the public key to Tasmota UFS.")
             return 0
 
         write_manifest(

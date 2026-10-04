@@ -8,7 +8,7 @@ var OTA_updater = module("OTA_updater")
 var APP_NAME = "TasmotaBerryOTA"
 var GITHUB_OWNER = "WakMun"
 var GITHUB_REPOSITORY = "TasmotaBerryOTA"
-var PUBLIC_KEY_PATH = "OTA_Updater_ed25519.pub"
+var PUBLIC_KEY_PATH = "OTA_Updater_p256.pub"
 var APP_PATH = "Application.bec"
 var STAGED_PATH = "Application.new"
 var STAGED_SOURCE_PATH = "Application.new.be"
@@ -23,7 +23,7 @@ var FAILED_APP_PATH = "Application.bec.failed"
 var MAX_APP_SIZE = 65536
 var MAX_MANIFEST_SIZE = 4096
 var TIMER_ID = "OTAUpdateTimer"
-var BOOT_UPDATE_DELAY = 180000
+var BOOT_UPDATE_DELAY = 60000
 var RETRY_DELAY = 600000
 var REGULAR_CHECK_DELAY = 3600000
 
@@ -125,7 +125,7 @@ def _fetch_text(url)
   var status = client.GET()
   if status != 200
     client.close()
-    _log("manifest request failed with HTTP " + str(status))
+    _log("manifest request failed with HTTP " + str(status) + " for " + url)
     return nil
   end
   var response_size = client.get_size()
@@ -180,11 +180,11 @@ def _read_public_key()
     return nil
   end
   var file = open(PUBLIC_KEY_PATH, "r")
-  var key = file.readbytes(32)
+  var key = file.readbytes(65)
   var extra = file.readbytes(1)
   file.close()
-  if size(key) != 32 || size(extra) != 0
-    _log("device public key must contain exactly 32 raw bytes")
+  if size(key) != 65 || key[0] != 4 || size(extra) != 0
+    _log("device P-256 public key must be exactly 65 uncompressed bytes")
     return nil
   end
   return key
@@ -225,11 +225,9 @@ def _verify_manifest(manifest, result)
   end
 
   var signature = bytes().fromhex(signature_hex)
-  var signed_text = APP_NAME + "\n" + version + "\n" + str(build) + "\n" + digest_hex
-  var signed_hash = crypto.SHA256()
-  signed_hash.update(bytes().fromstring(signed_text))
+  var signed_message = bytes().fromstring(APP_NAME + "\n" + version + "\n" + str(build) + "\n" + digest_hex)
   var public_key = _read_public_key()
-  if public_key == nil || !crypto.ED25519().verify(signed_hash.out(), signature, public_key)
+  if public_key == nil || !crypto.EC_P256().ecdsa_verify_sha256(public_key, signed_message, signature)
     _log("SECURITY ERROR: manifest signature verification failed")
     return nil
   end
