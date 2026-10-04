@@ -32,8 +32,9 @@ which `Application.be` is authenticated.
 - Tasmota Berry exposing `crypto.SHA256`,
   `crypto.EC_P256().ecdsa_verify_sha256`, and `tasmota.compile`. The updater
   uses P-256 (secp256r1) ECDSA, available in standard `tasmota32.bin` builds.
-- Enough free UFS space for the 64 KiB source limit, compiled staging file,
-  active application, and rollback copy.
+- Enough free UFS space for the downloaded source, verified source copy,
+  compiled staging file, active application, and rollback copy (allow about
+  320 KiB for an update at the 64 KiB per-file limit).
 
 Before uploading the files:
 
@@ -107,25 +108,29 @@ python -m pytest
 
 The boot guard follows this sequence:
 
-1. If `/Application.update.pending` exists, activate `/Application.new` by
+1. If `/Application.update.pending` contains the complete `ready` marker,
+   activate `/Application.new.bec` by
    renaming the previous `/Application.bec` to a rollback file, then promoting
    the staged bytecode.
 2. Load `/Application.bec`. If loading fails during an update, restore the
    previous bytecode and restart Tasmota. After a successful load, record the
    build and remove the rollback files.
-3. Schedule a check after three minutes. If Wi-Fi is down, retry later.
+3. Schedule a check after 1 minute. If Wi-Fi is down, retry later.
 4. Fetch the latest stable release manifest, and skip it when its build is not
    greater than the locally installed build.
-5. Download raw `Application.be` to `/Application.new`, check its SHA-256 and
-   P-256 ECDSA signature using the device-only public key, compile it to Berry
-   bytecode, and atomically set the pending marker. The current application
-   keeps running; the staged update is activated on the next boot.
+5. Download raw `Application.be` to `Application.new`, check its SHA-256 and
+   P-256 ECDSA signature using the device-only public key, copy the verified
+   source to `Application.new.be`, and compile it to `Application.new.bec`.
+   The verified bytecode remains staged there until the pending marker is set.
+   The current application keeps running; the staged update is activated on
+   the next boot.
 
-LittleFS/UFS files are `/autoexec.be` (boot guard),
-`/Application.bec` (active bytecode), and `/Application.new` (quarantined
-source while verification runs, then compiled bytecode after it passes).
-Small marker/build files and a rollback copy support recovery from interrupted
-file renames and failed application startup.
+LittleFS/UFS files include `autoexec.be` (boot guard),
+`Application.bec` (active bytecode), `Application.new` (downloaded source
+during verification), and
+`Application.new.bec` (verified compiled bytecode awaiting activation). Small
+marker/build files and a rollback copy support recovery from interrupted file
+renames and failed application startup.
 
 The timer defers update work until after startup, but Berry's event loop and
 Tasmota's standard `webclient` and compile call are synchronous. A network

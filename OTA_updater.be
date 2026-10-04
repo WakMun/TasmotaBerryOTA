@@ -8,18 +8,17 @@ var OTA_updater = module("OTA_updater")
 var APP_NAME = "TasmotaBerryOTA"
 var GITHUB_OWNER = "WakMun"
 var GITHUB_REPOSITORY = "TasmotaBerryOTA"
-var PUBLIC_KEY_PATH = "OTA_Updater_p256.pub"
-var APP_PATH = "Application.bec"
-var STAGED_PATH = "Application.new"
-var STAGED_SOURCE_PATH = "Application.new.be"
-var STAGED_BYTECODE_PATH = "Application.new.bec"
-var STAGED_BUILD_PATH = "Application.new.build"
-var STAGED_BUILD_TEMP_PATH = "Application.new.build.tmp"
-var PENDING_PATH = "Application.update.pending"
-var PENDING_TEMP_PATH = "Application.update.pending.tmp"
-var INSTALLED_BUILD_PATH = "Application.build"
-var OLD_APP_PATH = "Application.bec.old"
-var FAILED_APP_PATH = "Application.bec.failed"
+var PUBLIC_KEY_PATH = "/OTA_Updater_p256.pub"
+var APP_PATH = "/Application.bec"
+var DOWNLOAD_PATH = "/Application.new"
+var STAGED_PATH = "/Application.new.bec"
+var STAGED_SOURCE_PATH = "/Application.new.be"
+var STAGED_BYTECODE_PATH = "/Application.new.bec"
+var STAGED_BUILD_PATH = "/Application.new.build"
+var PENDING_PATH = "/Application.update.pending"
+var INSTALLED_BUILD_PATH = "/Application.build"
+var OLD_APP_PATH = "/Application.bec.old"
+var FAILED_APP_PATH = "/Application.bec.failed"
 var MAX_APP_SIZE = 65536
 var MAX_MANIFEST_SIZE = 4096
 var TIMER_ID = "OTAUpdateTimer"
@@ -39,18 +38,6 @@ def _remove_if_exists(file_path)
   return true
 end
 
-def _cleanup_unstaged_files()
-  if path.exists(PENDING_PATH)
-    return
-  end
-  _remove_if_exists(STAGED_PATH)
-  _remove_if_exists(STAGED_SOURCE_PATH)
-  _remove_if_exists(STAGED_BYTECODE_PATH)
-  _remove_if_exists(STAGED_BUILD_PATH)
-  _remove_if_exists(STAGED_BUILD_TEMP_PATH)
-  _remove_if_exists(PENDING_TEMP_PATH)
-end
-
 def _read_text(file_path)
   var file = open(file_path, "r")
   var text = file.read()
@@ -58,18 +45,43 @@ def _read_text(file_path)
   return text
 end
 
-def _write_new_file(file_path, temp_path, text)
-  if path.exists(file_path) || !_remove_if_exists(temp_path)
+def _pending_marker_is_ready()
+  try
+    return _read_text(PENDING_PATH) == "ready"
+  except .. as error, message
+    _log("could not read pending marker: " + message)
+    return false
+  end
+end
+
+def _cleanup_unstaged_files()
+  if path.exists(PENDING_PATH)
+    if _pending_marker_is_ready()
+      return
+    end
+    _log("removing an incomplete pending marker")
+    if !_remove_if_exists(PENDING_PATH)
+      return
+    end
+  end
+  _remove_if_exists(DOWNLOAD_PATH)
+  _remove_if_exists(STAGED_SOURCE_PATH)
+  _remove_if_exists(STAGED_BYTECODE_PATH)
+  _remove_if_exists(STAGED_BUILD_PATH)
+end
+
+def _write_new_file(file_path, text)
+  if path.exists(file_path)
     _log("refusing to overwrite " + file_path)
     return false
   end
-  var file = open(temp_path, "w")
+  var file = open(file_path, "w")
   file.write(text)
   file.flush()
   file.close()
-  if !path.rename(temp_path, file_path)
-    _log("could not atomically create " + file_path)
-    _remove_if_exists(temp_path)
+  if !path.exists(file_path) || _read_text(file_path) != text
+    _log("could not write and verify " + file_path)
+    _remove_if_exists(file_path)
     return false
   end
   return true
@@ -113,6 +125,38 @@ def _hash_file(file_path)
   return {"digest": hash.out(), "size": total}
 end
 
+def _copy_verified_source()
+  if !_remove_if_exists(STAGED_SOURCE_PATH)
+    return false
+  end
+  var source = open(DOWNLOAD_PATH, "r")
+  var destination = open(STAGED_SOURCE_PATH, "w")
+  var hash = crypto.SHA256()
+  var total = 0
+  while true
+    var chunk = source.readbytes(1024)
+    if size(chunk) == 0
+      break
+    end
+    destination.write(chunk)
+    hash.update(chunk)
+    total += size(chunk)
+  end
+  source.close()
+  destination.flush()
+  destination.close()
+
+  var downloaded = _hash_file(DOWNLOAD_PATH)
+  var copied = _hash_file(STAGED_SOURCE_PATH)
+  if total != downloaded["size"] || hash.out() != downloaded["digest"] ||
+      copied["size"] != downloaded["size"] || copied["digest"] != downloaded["digest"]
+    _log("verified source copy failed its size or SHA-256 check")
+    _remove_if_exists(STAGED_SOURCE_PATH)
+    return false
+  end
+  return true
+end
+
 def _fetch_text(url)
   if !string.startswith(url, "https://")
     _log("refusing a non-HTTPS URL")
@@ -144,7 +188,7 @@ def _download_application(url)
     _log("refusing a non-HTTPS application URL")
     return false
   end
-  if !_remove_if_exists(STAGED_PATH)
+  if !_remove_if_exists(DOWNLOAD_PATH)
     return false
   end
   var client = webclient()
@@ -163,12 +207,12 @@ def _download_application(url)
     _log("application size is unknown, empty, or exceeds 64 KiB")
     return false
   end
-  client.write_file(STAGED_PATH)
+  client.write_file(DOWNLOAD_PATH)
   client.close()
-  var result = _hash_file(STAGED_PATH)
+  var result = _hash_file(DOWNLOAD_PATH)
   if result["size"] != expected_size
     _log("application download size does not match its HTTP content length")
-    _remove_if_exists(STAGED_PATH)
+    _remove_if_exists(DOWNLOAD_PATH)
     return false
   end
   return result
@@ -238,8 +282,8 @@ def _compile_staged_application()
   if !_remove_if_exists(STAGED_SOURCE_PATH) || !_remove_if_exists(STAGED_BYTECODE_PATH)
     return false
   end
-  if !path.rename(STAGED_PATH, STAGED_SOURCE_PATH)
-    _log("could not prepare verified source for compilation")
+  if !_copy_verified_source()
+    _log("could not prepare verified source for compilation: " + STAGED_SOURCE_PATH)
     return false
   end
   tasmota.compile(STAGED_SOURCE_PATH)
@@ -255,8 +299,8 @@ def _compile_staged_application()
   if !_remove_if_exists(STAGED_SOURCE_PATH)
     return false
   end
-  if !path.rename(STAGED_BYTECODE_PATH, STAGED_PATH)
-    _log("could not move compiled bytecode into the staging slot")
+  if !_remove_if_exists(DOWNLOAD_PATH)
+    _log("could not remove the verified source download after compilation")
     return false
   end
   return true
@@ -303,7 +347,7 @@ def _stage_update()
 
   var result = _download_application(base_url + "Application.be")
   if result == nil || result == false
-    _remove_if_exists(STAGED_PATH)
+    _remove_if_exists(DOWNLOAD_PATH)
     return false
   end
   var verified = nil
@@ -313,22 +357,22 @@ def _stage_update()
     _log("security validation failed: " + message)
   end
   if verified == nil
-    _remove_if_exists(STAGED_PATH)
+    _remove_if_exists(DOWNLOAD_PATH)
     _log("SECURITY ERROR: rejected unverified application; staged source deleted")
     return false
   end
   _log("signature verified for version " + verified["version"] + ", build " + str(verified["build"]))
   if !_compile_staged_application()
-    _remove_if_exists(STAGED_PATH)
+    _remove_if_exists(DOWNLOAD_PATH)
     _remove_if_exists(STAGED_SOURCE_PATH)
     _remove_if_exists(STAGED_BYTECODE_PATH)
     return false
   end
-  if !_write_new_file(STAGED_BUILD_PATH, STAGED_BUILD_TEMP_PATH, str(verified["build"]))
+  if !_write_new_file(STAGED_BUILD_PATH, str(verified["build"]))
     _remove_if_exists(STAGED_PATH)
     return false
   end
-  if !_write_new_file(PENDING_PATH, PENDING_TEMP_PATH, "ready")
+  if !_write_new_file(PENDING_PATH, "ready")
     _remove_if_exists(STAGED_PATH)
     _remove_if_exists(STAGED_BUILD_PATH)
     return false
@@ -361,6 +405,11 @@ end
 
 def activate_staged()
   if !path.exists(PENDING_PATH)
+    return false
+  end
+  if !_pending_marker_is_ready()
+    _log("pending marker is incomplete; refusing to activate the update")
+    _remove_if_exists(PENDING_PATH)
     return false
   end
   if !path.exists(STAGED_PATH)
@@ -401,17 +450,35 @@ def activate_staged()
   return true
 end
 
-def confirm_active()
+def confirm_active(activation_ok)
+
   if path.exists(PENDING_PATH)
+    if !_pending_marker_is_ready()
+      _log("pending marker is incomplete; refusing to confirm the update")
+      return false
+    end
+
+    # CRITICAL FIX: If an update was pending but activation failed, 
+    # clear out the staging files and refuse to update the build number.
+    if !activation_ok
+      _log("WARNING: Update was pending but activation failed. Cleaning up staged files to prevent build mismatch.")
+      _remove_if_exists(PENDING_PATH)
+      _remove_if_exists(STAGED_BUILD_PATH)
+      _remove_if_exists(STAGED_PATH)
+      return false
+    end
+
     if !path.exists(STAGED_BUILD_PATH)
       _log("missing staged build marker; preserving recovery files")
       return false
     end
+
     var build = _read_text(STAGED_BUILD_PATH)
     var file = open(INSTALLED_BUILD_PATH, "w")
     file.write(build)
     file.flush()
     file.close()
+    
     if !_remove_if_exists(PENDING_PATH) || !_remove_if_exists(STAGED_BUILD_PATH)
       return false
     end
@@ -419,6 +486,7 @@ def confirm_active()
   end
   return _remove_if_exists(OLD_APP_PATH)
 end
+
 
 def rollback_staged()
   if !path.exists(PENDING_PATH)
