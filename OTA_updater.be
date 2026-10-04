@@ -3,12 +3,12 @@ import json
 import path
 import string
 
-var tmc_updater = module("tmc_updater")
+var OTA_updater = module("OTA_updater")
 
-var APP_NAME = "TasmotaAutoUpdater"
+var APP_NAME = "TasmotaBerryOTA"
 var GITHUB_OWNER = "WakMun"
-var GITHUB_REPOSITORY = "TasmotaAutoUpdater"
-var PUBLIC_KEY_PATH = "/tmc_ed25519.pub"
+var GITHUB_REPOSITORY = "TasmotaBerryOTA"
+var PUBLIC_KEY_PATH = "OTA_Updater_ed25519.pub"
 var APP_PATH = "Application.bec"
 var STAGED_PATH = "Application.new"
 var STAGED_SOURCE_PATH = "Application.new.be"
@@ -22,13 +22,13 @@ var OLD_APP_PATH = "Application.bec.old"
 var FAILED_APP_PATH = "Application.bec.failed"
 var MAX_APP_SIZE = 65536
 var MAX_MANIFEST_SIZE = 4096
-var TIMER_ID = "TasmotaAutoUpdaterUpdate"
+var TIMER_ID = "OTAUpdateTimer"
 var BOOT_UPDATE_DELAY = 180000
 var RETRY_DELAY = 600000
 var REGULAR_CHECK_DELAY = 3600000
 
 def _log(message)
-  print("TasmotaAutoUpdater updater:", message)
+  print("TasmotaBerryOTA updater:", message)
 end
 
 def _remove_if_exists(file_path)
@@ -120,7 +120,7 @@ def _fetch_text(url)
   end
   var client = webclient()
   client.set_follow_redirects(true)
-  client.set_useragent("TasmotaAutoUpdater-updater")
+  client.set_useragent("TasmotaBerryOTA-updater")
   client.begin(url)
   var status = client.GET()
   if status != 200
@@ -149,7 +149,7 @@ def _download_application(url)
   end
   var client = webclient()
   client.set_follow_redirects(true)
-  client.set_useragent("TasmotaAutoUpdater-updater")
+  client.set_useragent("TasmotaBerryOTA-updater")
   client.begin(url)
   var status = client.GET()
   if status != 200
@@ -270,7 +270,7 @@ def _stage_update()
     return false
   end
   if GITHUB_OWNER == "YOUR_GITHUB_OWNER" || GITHUB_OWNER == ""
-    _log("set GITHUB_OWNER in tmc_updater.be before deployment")
+    _log("set GITHUB_OWNER in OTA_updater.be before deployment")
     return false
   end
   _cleanup_unstaged_files()
@@ -449,9 +449,9 @@ def rollback_staged()
   return true
 end
 
-tmc_updater.start_background_check = start_background_check
-tmc_updater.activate_staged = activate_staged
-tmc_updater.confirm_active = confirm_active
-tmc_updater.rollback_staged = rollback_staged
+OTA_updater.start_background_check = start_background_check
+OTA_updater.activate_staged = activate_staged
+OTA_updater.confirm_active = confirm_active
+OTA_updater.rollback_staged = rollback_staged
 
-return tmc_updater
+return OTA_updater

@@ -1,6 +1,7 @@
-# TasmotaMotorControl
+# TasmotaBerryOTA
 
-A signed, staged Berry application updater for Tasmota32. `autoexec.be` is the
+This repo provides an OTA update capability for ESP32 microcontrollers running 
+tasmota32.  `autoexec.be` is the
 small boot guard: it activates bytecode staged by an earlier update check,
 loads `/application.bec`, then schedules a GitHub check three minutes after
 startup. The updater verifies the downloaded raw Berry source before compiling
