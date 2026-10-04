@@ -55,7 +55,6 @@ jobs:
             --input Application.be \
             --private-key signing-key.pem \
             --output app_manifest.json
-          cp Application.be Application.be
       - name: Publish stable release assets
         env:
           GH_TOKEN: ${{ github.token }}
