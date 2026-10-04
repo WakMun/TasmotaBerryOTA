@@ -61,6 +61,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          gh release create "$GITHUB_REF_NAME" application.be app_manifest.json \
-            --title "TasmotaMotorControl $VERSION (build $GITHUB_RUN_NUMBER)" \
-            --notes "Signed TasmotaMotorControl Berry application release."
+          gh release create "$GITHUB_REF_NAME" Application.be app_manifest.json \
+            --title "OTA_Application $VERSION (build $GITHUB_RUN_NUMBER)" \
+            --notes "Signed TasmotaBerryOTA Berry application release."

@@ -1,14 +1,19 @@
 # TasmotaBerryOTA
 
 This repo provides an OTA update capability for ESP32 microcontrollers running 
-tasmota32.  `autoexec.be` is the
+tasmota32. Your Microcontroller must support berry scripting to use this eg ESP32s. 
+Normally, Tasmota versions for ESP8266s do not come with berry scripting enabled.
+In that case, the functionality as provided here is will not work.  
+
+Basically there are four files here. 
+ `autoexec.be` is the
 small boot guard: it activates bytecode staged by an earlier update check,
 loads `/application.bec`, then schedules a GitHub check three minutes after
 startup. The updater verifies the downloaded raw Berry source before compiling
 it locally and marking it ready for the next boot.
 
 `Application.be` is the sample application. The release workflow publishes a
-copy named `application.be`, together with `app_manifest.json`, as assets of a
+copy named `Application.be`, together with `app_manifest.json`, as assets of a
 stable GitHub Release.
 
 ## Device requirements and setup

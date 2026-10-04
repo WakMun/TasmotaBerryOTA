@@ -8,7 +8,7 @@ def change_color()
   strip.clear_to(colors[index])
   strip.show()
   index = (index + 1) % 3
-  tasmota.set_timer(1000, change_color, "BlinkTimer")
+  tasmota.set_timer(500, change_color, "BlinkTimer")
 end
 
 change_color()
