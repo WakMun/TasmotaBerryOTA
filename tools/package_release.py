@@ -83,7 +83,8 @@ def create_manifest(
 
 def load_private_key(path: Path) -> ec.EllipticCurvePrivateKey:
     key_data = path.read_bytes()
-    password_text = os.environ.get("TMC_SIGNING_KEY_PASSWORD")
+    
+    password_text = os.environ.get("OTA_SIGNING_KEY_PASSWORD")
     password = password_text.encode("utf-8") if password_text else None
     try:
         key = serialization.load_pem_private_key(key_data, password=password)
