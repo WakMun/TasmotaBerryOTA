@@ -15,7 +15,7 @@ loads `Application.bec`, then schedules a GitHub check three minutes after
 startup. The updater verifies the downloaded raw Berry source before compiling
 it locally and marking it ready for the next boot.
 
-`Application.be` is the sample application. The release workflow publishes a
+`Application.be` is the sample Application. The release workflow publishes a
 copy named `Application.be`, together with `app_manifest.json`, as assets of a
 stable GitHub Release.
 
@@ -49,9 +49,9 @@ Before uploading the files:
 3. Upload `autoexec.be` and `OTA_updater.be` to the root of Tasmota UFS.
 4. Compile `Application.be` on the device with
    `tasmota.compile("Application.be")`, then ensure the compiled
-   `/Application.bec` is installed as `/application.bec`. The casing in the
+   `/Application.bec` is installed as `/Application.bec`. The casing in the
    filesystem path may matter on the device.
-5. Create `/application.build` containing the installed release's build
+5. Create `/Application.build` containing the installed release's build
    integer, or `0` for an application not yet released by this workflow.
 
 The sample `Application.be` expects GPIO8 to be configured as WS2812. Change
@@ -70,8 +70,8 @@ The key-generation command is a one-time setup step; it is not part of
 publishing each release. Keep the private key in secure storage and add two
 GitHub Actions repository secrets:
 
-- `TMC_SIGNING_KEY_PEM`: the complete PEM private key.
-- `TMC_SIGNING_KEY_PASSWORD`: its passphrase.
+- `OTA_SIGNING_KEY_PEM`: the complete PEM private key.
+- `OTA_SIGNING_KEY_PASSWORD`: its passphrase.
 
 To publish an update, commit and push the changed `Application.be`, then push a
 stable semantic-version tag for that commit, such as `v1.2.3`. The tag push
@@ -79,7 +79,7 @@ triggers GitHub Actions. You do not run `package_release.py manifest` or
 generate the manifest yourself: Actions runs the Python tests, generates a
 monotonically increasing build number from the GitHub Actions run number, and
 runs `package_release.py` to hash the source and sign `app_manifest.json`. It
-then publishes the raw source as `application.be` and the generated manifest
+then publishes the raw source as `Application.be` and the generated manifest
 as assets of the stable GitHub Release.
 
 `tools/package_release.py` is the workflow's signing helper, not a required
@@ -107,22 +107,22 @@ python -m pytest
 
 The boot guard follows this sequence:
 
-1. If `/application.update.pending` exists, activate `/application.new` by
-   renaming the previous `/application.bec` to a rollback file, then promoting
+1. If `/Application.update.pending` exists, activate `/Application.new` by
+   renaming the previous `/Application.bec` to a rollback file, then promoting
    the staged bytecode.
-2. Load `/application.bec`. If loading fails during an update, restore the
+2. Load `/Application.bec`. If loading fails during an update, restore the
    previous bytecode and restart Tasmota. After a successful load, record the
    build and remove the rollback files.
 3. Schedule a check after three minutes. If Wi-Fi is down, retry later.
 4. Fetch the latest stable release manifest, and skip it when its build is not
    greater than the locally installed build.
-5. Download raw `application.be` to `/application.new`, check its SHA-256 and
+5. Download raw `Application.be` to `/Application.new`, check its SHA-256 and
    P-256 ECDSA signature using the device-only public key, compile it to Berry
    bytecode, and atomically set the pending marker. The current application
    keeps running; the staged update is activated on the next boot.
 
 LittleFS/UFS files are `/autoexec.be` (boot guard),
-`/application.bec` (active bytecode), and `/application.new` (quarantined
+`/Application.bec` (active bytecode), and `/Application.new` (quarantined
 source while verification runs, then compiled bytecode after it passes).
 Small marker/build files and a rollback copy support recovery from interrupted
 file renames and failed application startup.

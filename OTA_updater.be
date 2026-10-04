@@ -301,7 +301,7 @@ def _stage_update()
     return false
   end
 
-  var result = _download_application(base_url + "application.be")
+  var result = _download_application(base_url + "Application.be")
   if result == nil || result == false
     _remove_if_exists(STAGED_PATH)
     return false
