@@ -3,18 +3,28 @@
 This repo provides an OTA update capability for ESP32 microcontrollers running 
 tasmota32. Your Microcontroller must support berry scripting to use this eg ESP32s. 
 Normally, Tasmota versions for ESP8266s do not come with berry scripting enabled.
-In that case, the functionality as provided here is will not work.  
+In that case, this functionality will not work.  
 
-Basically there are four files here. 
+Basically there are four files here: `autoexec.be`, `OTA_updater.be`, `OTA_Updater_ed25519.pub`
+and `Application.be`.
+
+
  `autoexec.be` is the
 small boot guard: it activates bytecode staged by an earlier update check,
-loads `/application.bec`, then schedules a GitHub check three minutes after
+loads `Application.bec`, then schedules a GitHub check three minutes after
 startup. The updater verifies the downloaded raw Berry source before compiling
 it locally and marking it ready for the next boot.
 
 `Application.be` is the sample application. The release workflow publishes a
 copy named `Application.be`, together with `app_manifest.json`, as assets of a
 stable GitHub Release.
+
+`OTA_updater.be` is activated by `autoexec.be`. It checkes if there is a newer version of 
+`Application.be` if available on the github and authenticates it using the public key stored 
+in Tasmota UFS. If authenticated, it used as new the new application starting next reboot.
+
+Last one is `OTA_Updater_ed25519.pub`. It stores the public key against which the `Application.be` 
+is authenticated.
 
 ## Device requirements and setup
 
@@ -26,12 +36,12 @@ stable GitHub Release.
 
 Before uploading the files:
 
-1. Set `GITHUB_OWNER` in `tmc_updater.be` to the GitHub account or organization
+1. Set `GITHUB_OWNER` in `OTA_updater.be` to the GitHub account or organization
    containing this repository.
 2. Generate the Ed25519 key pair (instructions below) and copy the 32-byte raw
-   public key to Tasmota UFS as `/tmc_ed25519.pub`. Keep the private key
+   public key to Tasmota UFS as `/OTA_Updater_ed25519.pub`. Keep the private key
    private; never upload it or commit it.
-3. Upload `autoexec.be` and `tmc_updater.be` to the root of Tasmota UFS.
+3. Upload `autoexec.be` and `OTA_updater.be` to the root of Tasmota UFS.
 4. Compile `Application.be` on the device with
    `tasmota.compile("Application.be")`, then ensure the compiled
    `/Application.bec` is installed as `/application.bec`. The casing in the
@@ -48,7 +58,7 @@ Create an encrypted Ed25519 key pair once:
 
 ```powershell
 python -m pip install -e ".[test]"
-python tools/package_release.py keygen --private-key signing-key.pem --public-key tmc_ed25519.pub
+python tools/package_release.py keygen --private-key signing-key.pem --public-key OTA_Updater_ed25519.pub
 ```
 
 The key-generation command is a one-time setup step; it is not part of
@@ -65,7 +75,7 @@ generate the manifest yourself: Actions builds the Berry interpreter and uses
 it to parse `Application.be` without executing the application, runs the
 Python tests, generates a monotonically increasing build number from the
 GitHub Actions run number, and runs `package_release.py` to hash the source and
-sign `app_manifest.json`. It then publishes the raw source as `application.be`
+sign `app_manifest.json`. It then publishes the raw source as `Application.be`
 and the generated manifest as assets of the stable GitHub Release.
 
 `tools/package_release.py` is the workflow's signing helper, not a required

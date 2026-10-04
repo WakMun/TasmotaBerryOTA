@@ -90,7 +90,7 @@ def test_keygen_writes_an_encrypted_private_key_and_raw_public_key(tmp_path, mon
     passphrase = "test-passphrase-123"
     monkeypatch.setattr("tools.package_release.getpass.getpass", lambda _: passphrase)
     private_path = tmp_path / "signing.pem"
-    public_path = tmp_path / "tmc_ed25519.pub"
+    public_path = tmp_path / "OTA_Updater_ed25519.pub"
 
     generate_keys(private_path, public_path)
 
